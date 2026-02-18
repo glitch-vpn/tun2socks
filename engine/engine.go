@@ -92,12 +92,17 @@ func start() error {
 
 func stop() (err error) {
 	_engineMu.Lock()
-	if _defaultDevice != nil {
-		_defaultDevice.Close()
-	}
+	// Stop the gvisor stack FIRST so dispatch goroutines exit before the
+	// device fd is closed.  Closing the fd while a dispatcher is blocked in
+	// poll()/readv() causes the kernel to recycle the fd number; the
+	// dispatcher then touches the recycled fd, triggering an Android fdsan
+	// crash.
 	if _defaultStack != nil {
 		_defaultStack.Close()
 		_defaultStack.Wait()
+	}
+	if _defaultDevice != nil {
+		_defaultDevice.Close()
 	}
 	_engineMu.Unlock()
 	return nil
