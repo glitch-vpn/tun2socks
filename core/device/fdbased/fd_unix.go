@@ -5,6 +5,7 @@ package fdbased
 import (
 	"fmt"
 	"strconv"
+	"sync"
 
 	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
@@ -17,9 +18,9 @@ const defaultMTU = 1500
 type FD struct {
 	stack.LinkEndpoint
 
-	fd     int
-	mtu    uint32
-	closed bool
+	fd        int
+	mtu       uint32
+	closeOnce sync.Once
 }
 
 func Open(name string, mtu uint32, offset int) (device.Device, error) {
@@ -42,11 +43,10 @@ func (f *FD) Name() string {
 }
 
 func (f *FD) Close() {
-	if !f.closed {
-		defer f.LinkEndpoint.Close()
+	f.closeOnce.Do(func() {
 		_ = unix.Close(f.fd)
-		f.closed = true
-	}
+	})
+	f.LinkEndpoint.Close()
 }
 
 var _ device.Device = (*FD)(nil)
