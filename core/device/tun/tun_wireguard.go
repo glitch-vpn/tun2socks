@@ -15,10 +15,11 @@ import (
 type TUN struct {
 	*iobased.Endpoint
 
-	nt     *tun.NativeTun
-	mtu    uint32
-	name   string
-	offset int
+	nt        *tun.NativeTun
+	mtu       uint32
+	name      string
+	offset    int
+	closeOnce sync.Once
 
 	rSizes []int
 	rBuffs [][]byte
@@ -90,6 +91,8 @@ func (t *TUN) Name() string {
 }
 
 func (t *TUN) Close() {
-	defer t.Endpoint.Close()
-	_ = t.nt.Close()
+	t.closeOnce.Do(func() {
+		_ = t.nt.Close()
+	})
+	t.Endpoint.Close()
 }
