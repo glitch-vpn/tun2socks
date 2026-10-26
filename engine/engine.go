@@ -56,12 +56,20 @@ func SetICMPHandler(h adapter.NetworkHandler) {
 	_engineMu.Unlock()
 }
 
-// Start starts the default engine up.
+// Start starts the default engine up. A failed start closes whatever it had
+// built and clears the key, the same teardown Stop runs.
+//
+// Start owns the file descriptor named by an fd://N device from the moment it
+// is called: it closes N itself when it fails before opening the device, and
+// the device it did open is closed by the teardown. The caller never closes N
+// after calling Start. The key's device is read under the engine lock, so a
+// key a Stop already cleared names no descriptor and Start closes none.
 func Start() error {
 	_engineMu.Lock()
 	defer _engineMu.Unlock()
 
-	if _defaultKey == nil {
+	k := _defaultKey
+	if k == nil {
 		return errors.New("empty key")
 	}
 
@@ -70,7 +78,11 @@ func Start() error {
 		restAPI,
 		netstack,
 	} {
-		if err := f(_defaultKey); err != nil {
+		if err := f(k); err != nil {
+			if _defaultDevice == nil {
+				releaseDeviceFD(k.Device)
+			}
+			closeLocked()
 			return err
 		}
 	}
@@ -88,15 +100,14 @@ func StartOrFatal() {
 // Stop shuts the default engine down.
 func Stop() error {
 	_engineMu.Lock()
-	defer func() {
-		_defaultStack = nil
-		_defaultDevice = nil
-		_defaultProxy = nil
-		_defaultKey = nil
-		_icmpHandler = nil
-		_engineMu.Unlock()
-	}()
+	defer _engineMu.Unlock()
+	closeLocked()
+	return nil
+}
 
+// closeLocked closes what the engine built and clears its state. The caller
+// holds _engineMu.
+func closeLocked() {
 	if _defaultStack != nil {
 		_defaultStack.Close()
 	}
@@ -106,8 +117,11 @@ func Stop() error {
 	if _defaultStack != nil {
 		_defaultStack.Wait()
 	}
-
-	return nil
+	_defaultStack = nil
+	_defaultDevice = nil
+	_defaultProxy = nil
+	_defaultKey = nil
+	_icmpHandler = nil
 }
 
 // StopOrFatal shuts the default engine down, and exits the
