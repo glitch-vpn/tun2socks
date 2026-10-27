@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"context"
 	"sync"
 	"testing"
 	"time"
@@ -16,30 +15,12 @@ import (
 	"github.com/xjasonlyu/tun2socks/v2/core/adapter"
 )
 
-// synOnCloseDevice hands the stack one more SYN as it is closed, and closes
-// once the stack has answered it: a connection an app opened while the engine
-// was stopping.
-type synOnCloseDevice struct {
-	*channel.Endpoint
-	closeOnce sync.Once
-}
+type channelDevice struct{ *channel.Endpoint }
 
-func (*synOnCloseDevice) Name() string { return "test" }
-func (*synOnCloseDevice) Type() string { return "channel" }
+func (channelDevice) Name() string { return "test" }
+func (channelDevice) Type() string { return "channel" }
 
-func (d *synOnCloseDevice) Close() {
-	d.closeOnce.Do(func() {
-		d.InjectInbound(header.IPv4ProtocolNumber, synPacket())
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		if synAck := d.ReadContext(ctx); synAck != nil {
-			synAck.DecRef()
-		}
-		d.Endpoint.Close()
-	})
-}
-
-func synPacket() *stack.PacketBuffer {
+func synPacket(srcPort uint16) *stack.PacketBuffer {
 	b := make([]byte, header.IPv4MinimumSize+header.TCPMinimumSize)
 	ip := header.IPv4(b)
 	ip.Encode(&header.IPv4Fields{
@@ -52,7 +33,7 @@ func synPacket() *stack.PacketBuffer {
 	ip.SetChecksum(^ip.CalculateChecksum())
 	tcp := header.TCP(b[header.IPv4MinimumSize:])
 	tcp.Encode(&header.TCPFields{
-		SrcPort:    40000,
+		SrcPort:    srcPort,
 		DstPort:    443,
 		SeqNum:     1,
 		DataOffset: header.TCPMinimumSize,
@@ -69,26 +50,53 @@ type holdingHandler struct{}
 func (holdingHandler) HandleTCP(adapter.TCPConn) {}
 func (holdingHandler) HandleUDP(adapter.UDPConn) {}
 
-// Stop never waits out the handshake of a connection opened while it runs,
-// about two minutes of SYN-ACK retransmits.
-func TestStopDoesNotWaitOnAConnectionOpenedWhileStopping(t *testing.T) {
-	dev := &synOnCloseDevice{Endpoint: channel.New(64, 1500, "")}
-	s, err := core.CreateStack(&core.Config{LinkEndpoint: dev, TransportHandler: holdingHandler{}})
-	if err != nil {
-		t.Fatalf("create stack: %v", err)
-	}
-	_engineMu.Lock()
-	_defaultStack, _defaultDevice = s, dev
-	_engineMu.Unlock()
+// Apps keep opening connections while the engine stops. A handshake that
+// registers after the abort pass must not hold Stop for its SYN-ACK
+// retransmits, about two minutes.
+func TestStopWhileAppsKeepConnecting(t *testing.T) {
+	const rounds, connectors = 10, 32
+	for round := range rounds {
+		dev := channelDevice{channel.New(1024, 1500, "")}
+		s, err := core.CreateStack(&core.Config{LinkEndpoint: dev, TransportHandler: holdingHandler{}})
+		if err != nil {
+			t.Fatalf("create stack: %v", err)
+		}
+		_engineMu.Lock()
+		_defaultStack, _defaultDevice = s, dev
+		_engineMu.Unlock()
 
-	stopped := make(chan struct{})
-	go func() {
-		Stop()
-		close(stopped)
-	}()
-	select {
-	case <-stopped:
-	case <-time.After(10 * time.Second):
-		t.Fatal("Stop still waiting 10s after a SYN arrived during it")
+		quit := make(chan struct{})
+		var apps sync.WaitGroup
+		for c := range connectors {
+			apps.Add(1)
+			go func() {
+				defer apps.Done()
+				for port := uint16(1024 + c*1000); ; port++ {
+					select {
+					case <-quit:
+						return
+					default:
+					}
+					dev.InjectInbound(header.IPv4ProtocolNumber, synPacket(port))
+					if synAck := dev.Read(); synAck != nil {
+						synAck.DecRef()
+					}
+				}
+			}()
+		}
+		time.Sleep(20 * time.Millisecond)
+
+		stopped := make(chan struct{})
+		go func() {
+			Stop()
+			close(stopped)
+		}()
+		select {
+		case <-stopped:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("round %d: Stop still waiting 10s with apps connecting", round)
+		}
+		close(quit)
+		apps.Wait()
 	}
 }

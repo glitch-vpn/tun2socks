@@ -107,23 +107,13 @@ func Stop() error {
 
 // closeLocked closes what the engine built and clears its state. The caller
 // holds _engineMu.
-//
-// The NIC goes before the endpoints are aborted: a SYN taken after the abort
-// opens an endpoint Wait sits on for its whole handshake. Removing it stops
-// the fd dispatchers before their fd closes, then closes the device.
 func closeLocked() {
 	if _defaultStack != nil {
-		for id := range _defaultStack.NICInfo() {
-			_defaultStack.RemoveNIC(id)
-		}
+		core.CloseStack(_defaultStack)
 	}
 	if _defaultDevice != nil {
 		_defaultDevice.Close()
 		_defaultDevice.Wait()
-	}
-	if _defaultStack != nil {
-		_defaultStack.Close()
-		_defaultStack.Wait()
 	}
 	_defaultStack = nil
 	_defaultDevice = nil
