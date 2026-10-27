@@ -44,6 +44,7 @@ func (f *FD) Name() string {
 
 func (f *FD) Close() {
 	f.closeOnce.Do(func() {
+		stopInbound(f.LinkEndpoint)
 		_ = unix.Close(f.fd)
 	})
 	f.LinkEndpoint.Close()
