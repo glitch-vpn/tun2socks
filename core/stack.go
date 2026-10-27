@@ -115,6 +115,9 @@ func CreateStack(cfg *Config) (*stack.Stack, error) {
 
 	for _, opt := range opts {
 		if err := opt(s); err != nil {
+			// A NIC already created has dispatchers reading the caller's
+			// device, which the caller closes next.
+			CloseStack(s)
 			return nil, err
 		}
 	}
