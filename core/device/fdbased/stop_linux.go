@@ -26,7 +26,13 @@ import (
 // The descriptors close only after Attach(nil) and Wait have returned, when no
 // goroutine polls or writes them; a dispatcher that was never attached has no
 // goroutine either. A device calls it once, from its Close under a sync.Once;
-// a second call would close the descriptors twice.
+// a second call would close the descriptors twice. The device is dead after
+// that: attaching it again would restart dispatchers on closed descriptors.
+//
+// Only the dispatchers in inboundDispatchers are reached. In RecvMMsg or
+// PacketMMap mode on a socket fd gVisor builds a readv dispatcher first and
+// replaces it, leaving that one's eventfd unreachable; the devices here use
+// Readv on a tun fd, where the first dispatcher is the one kept.
 func StopInbound(ep stack.LinkEndpoint) {
 	ep.Attach(nil)
 	ep.Wait()
