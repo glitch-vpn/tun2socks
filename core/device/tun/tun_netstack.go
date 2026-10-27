@@ -13,6 +13,7 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
 
 	"github.com/xjasonlyu/tun2socks/v2/core/device"
+	devicefdbased "github.com/xjasonlyu/tun2socks/v2/core/device/fdbased"
 )
 
 type TUN struct {
@@ -49,8 +50,16 @@ func Open(name string, mtu uint32) (device.Device, error) {
 	}
 	t.mtu = _mtu
 
+	if err := t.attachEndpoint(); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+// attachEndpoint builds the link endpoint that reads and writes t.fd.
+func (t *TUN) attachEndpoint() error {
 	ep, err := fdbased.New(&fdbased.Options{
-		FDs: []int{fd},
+		FDs: []int{t.fd},
 		MTU: t.mtu,
 		// TUN only, ignore ethernet header.
 		EthernetHeader: false,
@@ -67,11 +76,11 @@ func Open(name string, mtu uint32) (device.Device, error) {
 		MaxSyscallHeaderBytes: 0x00,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create endpoint: %w", err)
+		return fmt.Errorf("create endpoint: %w", err)
 	}
 	t.LinkEndpoint = ep
 
-	return t, nil
+	return nil
 }
 
 func (t *TUN) Name() string {
@@ -80,6 +89,7 @@ func (t *TUN) Name() string {
 
 func (t *TUN) Close() {
 	t.closeOnce.Do(func() {
+		devicefdbased.StopInbound(t.LinkEndpoint)
 		_ = unix.Close(t.fd)
 	})
 	t.LinkEndpoint.Close()

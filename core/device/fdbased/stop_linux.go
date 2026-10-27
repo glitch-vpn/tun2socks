@@ -13,7 +13,7 @@ import (
 	"github.com/xjasonlyu/tun2socks/v2/log"
 )
 
-// stopInbound stops the endpoint's inbound dispatchers and closes the
+// StopInbound stops the endpoint's inbound dispatchers and closes the
 // eventfd each one signals its stop through.
 //
 // gVisor (v0.0.0-20260701204157-69c2d17aea96) creates that eventfd, a
@@ -25,8 +25,9 @@ import (
 //
 // The descriptors close only after Attach(nil) and Wait have returned, when no
 // goroutine polls or writes them; a dispatcher that was never attached has no
-// goroutine either. The caller calls it at most once.
-func stopInbound(ep stack.LinkEndpoint) {
+// goroutine either. A device calls it once, from its Close under a sync.Once;
+// a second call would close the descriptors twice.
+func StopInbound(ep stack.LinkEndpoint) {
 	ep.Attach(nil)
 	ep.Wait()
 

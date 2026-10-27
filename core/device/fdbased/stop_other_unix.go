@@ -4,5 +4,5 @@ package fdbased
 
 import "gvisor.dev/gvisor/pkg/tcpip/stack"
 
-// stopInbound does nothing: the iobased endpoint has no eventfd to close.
-func stopInbound(stack.LinkEndpoint) {}
+// StopInbound does nothing: the iobased endpoint has no eventfd to close.
+func StopInbound(stack.LinkEndpoint) {}
