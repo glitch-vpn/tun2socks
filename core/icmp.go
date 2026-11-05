@@ -23,6 +23,8 @@ func withICMPHandler(h adapter.NetworkHandler) option.Option {
 			return false
 		})
 		s.SetTransportProtocolHandler(icmp.ProtocolNumber4, f.HandlePacket)
+		// ICMPv6 too, so a handler sees an echo request before gVisor answers it.
+		s.SetTransportProtocolHandler(icmp.ProtocolNumber6, f.HandlePacket)
 		return nil
 	}
 }
