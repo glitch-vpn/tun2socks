@@ -45,8 +45,9 @@ func injectSYN(dev *channel.Endpoint) {
 	dev.InjectInbound(ipv6.ProtocolNumber, pkt)
 }
 
-// answerTo returns the TCP flags of the stack's reply to a SYN.
-func answerTo(t *testing.T, admit TCPAdmission) header.TCPFlags {
+// answerTo returns the TCP flags of the stack's reply to a SYN, and false when
+// it sent none.
+func answerTo(t *testing.T, admit TCPAdmission) (header.TCPFlags, bool) {
 	t.Helper()
 	dev := channel.New(16, 1500, "")
 	s, err := CreateStack(&Config{LinkEndpoint: dev, TransportHandler: nopHandler{}, TCPAdmission: admit})
@@ -56,43 +57,71 @@ func answerTo(t *testing.T, admit TCPAdmission) header.TCPFlags {
 	defer CloseStack(s)
 
 	injectSYN(dev)
-	deadline := time.Now().Add(5 * time.Second)
+	return readAnswer(dev, time.Second)
+}
+
+func readAnswer(dev *channel.Endpoint, wait time.Duration) (header.TCPFlags, bool) {
+	deadline := time.Now().Add(wait)
 	for time.Now().Before(deadline) {
 		if pkt := dev.Read(); pkt != nil {
 			defer pkt.DecRef()
 			view := pkt.ToView().AsSlice()
-			return header.TCP(view[header.IPv6MinimumSize:]).Flags()
+			return header.TCP(view[header.IPv6MinimumSize:]).Flags(), true
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("the stack never answered the SYN")
-	return 0
+	return 0, false
 }
 
 func TestTCPAdmissionRefusedSYNIsResetBeforeAnyHandshake(t *testing.T) {
 	var asked netip.AddrPort
-	flags := answerTo(t, func(destination netip.AddrPort) bool {
+	flags, answered := answerTo(t, func(destination netip.AddrPort) TCPVerdict {
 		asked = destination
-		return false
+		return TCPReset
 	})
-	if flags&header.TCPFlagRst == 0 || flags&header.TCPFlagSyn != 0 {
-		t.Fatalf("answer flags = %v, want an RST and no SYN-ACK", flags)
+	if !answered || flags&header.TCPFlagRst == 0 || flags&header.TCPFlagSyn != 0 {
+		t.Fatalf("answer flags = %v (answered %v), want an RST and no SYN-ACK", flags, answered)
 	}
 	if want := netip.MustParseAddrPort("[2607:f8b0::1]:443"); asked != want {
 		t.Fatalf("asked about %v, want %v", asked, want)
 	}
 }
 
+func TestTCPAdmissionDroppedSYNGetsNoAnswerAndIsJudgedAgainOnRetransmit(t *testing.T) {
+	var asked int
+	verdicts := []TCPVerdict{TCPDrop, TCPAdmit}
+	dev := channel.New(16, 1500, "")
+	s, err := CreateStack(&Config{LinkEndpoint: dev, TransportHandler: nopHandler{}, TCPAdmission: func(netip.AddrPort) TCPVerdict {
+		v := verdicts[asked]
+		asked++
+		return v
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer CloseStack(s)
+
+	injectSYN(dev)
+	if flags, answered := readAnswer(dev, 300*time.Millisecond); answered {
+		t.Fatalf("a dropped SYN was answered with flags %v", flags)
+	}
+	injectSYN(dev)
+	flags, answered := readAnswer(dev, time.Second)
+	if !answered || flags&header.TCPFlagSyn == 0 || flags&header.TCPFlagAck == 0 {
+		t.Fatalf("the retransmitted SYN: flags %v (answered %v), want SYN+ACK", flags, answered)
+	}
+}
+
 func TestTCPAdmissionAdmittedSYNGetsASYNACK(t *testing.T) {
-	flags := answerTo(t, func(netip.AddrPort) bool { return true })
-	if flags&header.TCPFlagSyn == 0 || flags&header.TCPFlagAck == 0 {
+	flags, answered := answerTo(t, func(netip.AddrPort) TCPVerdict { return TCPAdmit })
+	if !answered || flags&header.TCPFlagSyn == 0 || flags&header.TCPFlagAck == 0 {
 		t.Fatalf("answer flags = %v, want SYN+ACK", flags)
 	}
 }
 
 func TestNoTCPAdmissionAnswersEverySYN(t *testing.T) {
-	flags := answerTo(t, nil)
-	if flags&header.TCPFlagSyn == 0 {
+	flags, answered := answerTo(t, nil)
+	if !answered || flags&header.TCPFlagSyn == 0 {
 		t.Fatalf("answer flags = %v, want SYN+ACK", flags)
 	}
 }

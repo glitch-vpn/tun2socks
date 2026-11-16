@@ -42,10 +42,23 @@ const (
 	tcpKeepaliveInterval = 30 * time.Second
 )
 
+// TCPVerdict is what a SYN gets before the stack answers it.
+type TCPVerdict uint8
+
+const (
+	// TCPAdmit lets the handshake complete and the flow reach the handler.
+	TCPAdmit TCPVerdict = iota
+	// TCPReset answers with an RST, so the client's connect fails at once
+	// instead of succeeding and then losing the connection.
+	TCPReset
+	// TCPDrop answers nothing; the client retransmits the SYN, which is judged
+	// again.
+	TCPDrop
+)
+
 // TCPAdmission is asked, with the destination of a SYN, before the stack
-// answers it. False resets the attempt, so the client's connect fails at once
-// instead of succeeding and then losing the connection.
-type TCPAdmission func(destination netip.AddrPort) bool
+// answers it.
+type TCPAdmission func(destination netip.AddrPort) TCPVerdict
 
 func withTCPHandler(h adapter.TransportHandler, admit TCPAdmission) option.Option {
 	return func(s *stack.Stack) error {
@@ -64,9 +77,15 @@ func withTCPHandler(h adapter.TransportHandler, admit TCPAdmission) option.Optio
 				}
 			}()
 
-			if admit != nil && !admit(destinationOf(id)) {
-				r.Complete(true)
-				return
+			if admit != nil {
+				switch admit(destinationOf(id)) {
+				case TCPReset:
+					r.Complete(true)
+					return
+				case TCPDrop:
+					r.Complete(false)
+					return
+				}
 			}
 
 			// Perform a TCP three-way handshake.

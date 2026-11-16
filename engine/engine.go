@@ -43,6 +43,9 @@ var (
 
 	// _tcpAdmission holds the SYN admission for the engine.
 	_tcpAdmission core.TCPAdmission
+
+	// openDevice opens the device a key names.
+	openDevice = parseDevice
 )
 
 // Insert loads *Key to the default engine.
@@ -252,7 +255,7 @@ func netstack(k *Key) (err error) {
 	}
 	tunnel.T().SetProxy(_defaultProxy)
 
-	if _defaultDevice, err = parseDevice(k.Device, uint32(k.MTU)); err != nil {
+	if _defaultDevice, err = openDevice(k.Device, uint32(k.MTU)); err != nil {
 		return err
 	}
 
