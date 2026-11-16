@@ -28,6 +28,9 @@ type Config struct {
 	// If nil, the default icmpForwarder is used.
 	ICMPHandler adapter.NetworkHandler
 
+	// TCPAdmission, when set, is asked before the stack answers a SYN.
+	TCPAdmission TCPAdmission
+
 	// MulticastGroups is used by internal stack to add
 	// nic to given groups.
 	MulticastGroups []netip.Addr
@@ -65,7 +68,7 @@ func CreateStack(cfg *Config) (*stack.Stack, error) {
 		// before creating NIC, otherwise NIC would dispatch packets
 		// to stack and cause race condition.
 		// Initiate transport protocol (TCP/UDP) with given handler.
-		withTCPHandler(cfg.TransportHandler),
+		withTCPHandler(cfg.TransportHandler, cfg.TCPAdmission),
 		withUDPHandler(cfg.TransportHandler),
 
 		// gVisor added NetworkPacketInfo.LocalAddressTemporary to

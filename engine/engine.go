@@ -40,6 +40,9 @@ var (
 
 	// _icmpHandler holds the custom ICMP handler for the engine.
 	_icmpHandler adapter.NetworkHandler
+
+	// _tcpAdmission holds the SYN admission for the engine.
+	_tcpAdmission core.TCPAdmission
 )
 
 // Insert loads *Key to the default engine.
@@ -53,6 +56,15 @@ func Insert(k *Key) {
 func SetICMPHandler(h adapter.NetworkHandler) {
 	_engineMu.Lock()
 	_icmpHandler = h
+	_engineMu.Unlock()
+}
+
+// SetTCPAdmission sets the check a TCP SYN meets before the default engine's
+// stack answers it; a refused one is reset. Like the ICMP handler it is
+// cleared by every stop and failed start.
+func SetTCPAdmission(a core.TCPAdmission) {
+	_engineMu.Lock()
+	_tcpAdmission = a
 	_engineMu.Unlock()
 }
 
@@ -120,6 +132,7 @@ func closeLocked() {
 	_defaultProxy = nil
 	_defaultKey = nil
 	_icmpHandler = nil
+	_tcpAdmission = nil
 }
 
 // StopOrFatal shuts the default engine down, and exits the
@@ -268,6 +281,7 @@ func netstack(k *Key) (err error) {
 		LinkEndpoint:     _defaultDevice,
 		TransportHandler: tunnel.T(),
 		ICMPHandler:      _icmpHandler,
+		TCPAdmission:     _tcpAdmission,
 		MulticastGroups:  multicastGroups,
 		Options:          opts,
 	}); err != nil {

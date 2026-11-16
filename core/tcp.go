@@ -1,6 +1,7 @@
 package core
 
 import (
+	"net/netip"
 	"time"
 
 	glog "gvisor.dev/gvisor/pkg/log"
@@ -41,7 +42,12 @@ const (
 	tcpKeepaliveInterval = 30 * time.Second
 )
 
-func withTCPHandler(h adapter.TransportHandler) option.Option {
+// TCPAdmission is asked, with the destination of a SYN, before the stack
+// answers it. False resets the attempt, so the client's connect fails at once
+// instead of succeeding and then losing the connection.
+type TCPAdmission func(destination netip.AddrPort) bool
+
+func withTCPHandler(h adapter.TransportHandler, admit TCPAdmission) option.Option {
 	return func(s *stack.Stack) error {
 		f := tcp.NewForwarder(s, defaultWndSize, maxConnAttempts, func(r *tcp.ForwarderRequest) {
 			var (
@@ -57,6 +63,11 @@ func withTCPHandler(h adapter.TransportHandler) option.Option {
 						id.RemoteAddress, id.RemotePort, id.LocalAddress, id.LocalPort, err)
 				}
 			}()
+
+			if admit != nil && !admit(destinationOf(id)) {
+				r.Complete(true)
+				return
+			}
 
 			// Perform a TCP three-way handshake.
 			ep, err = r.CreateEndpoint(&wq)
@@ -119,4 +130,9 @@ type tcpConn struct {
 
 func (c *tcpConn) ID() stack.TransportEndpointID {
 	return c.id
+}
+
+func destinationOf(id stack.TransportEndpointID) netip.AddrPort {
+	addr, _ := netip.AddrFromSlice(id.LocalAddress.AsSlice())
+	return netip.AddrPortFrom(addr.Unmap(), id.LocalPort)
 }
